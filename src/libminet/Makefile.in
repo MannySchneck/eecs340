@@ -22,4 +22,5 @@ lib-objs +=	arp.o \
 		tcpstate.o \
 		udp.o \
 		util.o \
-		minet_socket.o
+		minet_socket.o \
+		my_error.o
