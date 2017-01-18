@@ -8,13 +8,16 @@
 #define LENGTH_KEY_LEN sizeof(LENGTH_KEY)
 #define END_HEADERS "\r\n\r\n"
 #define END_HEADERS_LEN sizeof(END_HEADERS)
+#define END_LENGTH "\r\n"
+#define END_LENGTH_LEN sizeof(END_LENGTH)
 #define READ_MORE_DATA -1
 #define LENGTH_NOT_FOUND -2
+#define HTTP_PROTOCOL "HTTP/1.0"
 
 int write_n_bytes(int fd, char * buf, int count);
 int read_n_bytes(int fd, char * buf, int count);
 int check_status_line(char* buf);
-void build_get_request(char *buf, char *server_path, char* port_no);
+void build_get_request(char *buf, char *server_path);
 int parse_headers(char *buf, int *buf_pos, int datalen);
 int read_length(char* buf, int* bodylen_acc, int* buf_pos, int datalen);
 void flush_buffer(FILE* wheretoprint, char * buf, int* buf_pos, int* datalen);
@@ -29,22 +32,25 @@ int main(int argc, char * argv[]) {
         int server_port = 0;
         char * server_path = NULL;
 
+        int single_read_bytes = 0;
+        int body_bytes_read = 0;
         int sock = 0;
         int datalen = 0;
         int bodylen = 0;
         int bodylen_acc = 0;
         int length_pos = 0;
+        int found_response_end = 0;
         struct sockaddr_in sa;
         struct hostent *site;
         FILE * wheretoprint = stdout;
         int status = -1;
         int rc = 0;
-
-        char buf[BUFSIZE + 1];
-        buf[BUFSIZE] = NULL;
         int buf_pos = 0;
         struct timeval timeout;
         fd_set set;
+
+        char buf[BUFSIZE + 1];
+        buf[BUFSIZE] = NULL;
 
         /*parse args */
         if (argc != 5) {
@@ -53,9 +59,7 @@ int main(int argc, char * argv[]) {
 
         server_name = argv[2];
         server_port = atoi(argv[3]);
-        printf("PORT IS: %d\n", server_port);
         server_path = argv[4];
-        printf("SERVER IS: %s\n", server_name);
 
 
         /* initialize minet */
@@ -72,7 +76,6 @@ int main(int argc, char * argv[]) {
                 goto bad;
         }
 
-        printf("BOOTED MINET\n");
 
         // Do DNS lookup
         /* Hint: use gethostbyname() */
@@ -81,25 +84,19 @@ int main(int argc, char * argv[]) {
                 my_error_at_line(status, 1, "gethostbyname", __FILE__, __LINE__);
                 goto bad;
         }
-        printf("DNS LOOKUP WENT OK\n");
 
         memset(&sa, 0, sizeof(sa));
         sa.sin_family = AF_INET;
         sa.sin_port = htons(server_port);
         sa.sin_addr.s_addr = * ((unsigned long *) site->h_addr_list[0]);
 
-        printf("WAS ABLE TO PACK STRUCT\n");
-
-        printf("CONNECTING\n\n");
 
         /* connect socket */
         if((status = minet_connect(sock, &sa)) < 0){
-                printf("WHAT THE ACTUAL FUCK\n");
                 status = errno;
                 my_error_at_line(status, 1, "minet_connect", __FILE__, __LINE__);
                 exit(-1); // no need to close socket, never allocated.
         }
-        printf("CONNECTED");
 
         // Wait for socket to be writable
         FD_ZERO(&set);
@@ -108,15 +105,21 @@ int main(int argc, char * argv[]) {
         timeout.tv_sec = 5;
         timeout.tv_usec = 0;
 
-        while(!FD_ISSET(sock, &set)){
-                if(minet_select(sock + 1, NULL, &set, NULL, &timeout) < 0){
+        do {
+                status = minet_select(sock + 1, NULL, &set, NULL, &timeout);
+                if(status < 0){
                         my_error_at_line(status, 1, "minet_select", __FILE__, __LINE__);
                         goto bad;
                 }
-        }
+                if(status == 0){
+                        printf("Select timed out at line %d\n", __LINE__);
+                        goto bad;
+                }
+        } while(!FD_ISSET(sock, &set));
+
 
         // Build and send request
-        build_get_request(buf, argv[3], server_path);
+        build_get_request(buf, server_path);
         if((minet_write(sock, buf, strlen(buf))) < 0){
                 my_error_at_line(status, 1, "minet_write", __FILE__, __LINE__);
                 goto bad;}
@@ -127,23 +130,30 @@ int main(int argc, char * argv[]) {
         FD_SET(sock, &set);
 
 
-        while(!FD_ISSET(sock, &set)){
-                if(minet_select(sock + 1, &set, NULL, NULL, &timeout) < 0){
-                        my_error_at_line(status, 1, "minet_select", __FILE__, __LINE__);
-                        goto bad ;
+        do {
+                status = minet_select(sock + 1, &set, NULL, NULL, &timeout);
+                if(status < 0){
+                        my_error_at_line(status, 1, "minet_write", __FILE__, __LINE__);
+                        goto bad;
                 }
-        }
+                if(status == 0){
+                        printf("Select timed out at line: %d\n", __LINE__ - 1);
+                        goto bad;
+                }
+        } while(!FD_ISSET(sock, &set));
+
 
         // get to headers
         buf_pos = 1; // offset for headers
         datalen = 0;
-        while(1){
+        found_response_end = 0;
+        while(1 && !found_response_end){
                 datalen += read_n_bytes(sock, buf, BUFSIZE - datalen);
 
-                while(datalen >= 2 && buf_pos <  datalen){
+                while(datalen >= 2 && buf_pos <  datalen && !found_response_end){
                         if((buf[buf_pos - 1] == '\r' &&
                             buf[buf_pos]     == '\n')){
-                                break;
+                                found_response_end = 1;
                         }
                         buf_pos++;
                 }
@@ -159,7 +169,6 @@ int main(int argc, char * argv[]) {
         // parse headers
         while(1 &&
               length_pos == READ_MORE_DATA){
-                printf("somehow down here: %d\n\n", datalen);
 
                 datalen += read_n_bytes(sock, buf + datalen, BUFSIZE - datalen);
 
@@ -167,13 +176,13 @@ int main(int argc, char * argv[]) {
                         length_pos = parse_headers(buf, &buf_pos, datalen);
                 }
 
-                if(datalen >= BUFSIZE){
+                if(datalen > BUFSIZE && length_pos < 0){
                         flush_buffer(wheretoprint, buf, &buf_pos, &datalen);
                 }
         }
 
-        if(length_pos != LENGTH_NOT_FOUND){
-                my_error_at_line(status, 1, "Didn't find length", __FILE__, __LINE__);
+        if(length_pos == LENGTH_NOT_FOUND){
+                my_error_at_line(length_pos, 0, "Didn't find length", __FILE__, __LINE__);
                 goto bad; // XXX: What should I do here?
         }
         // parse in length field
@@ -183,33 +192,39 @@ int main(int argc, char * argv[]) {
                 buf_pos = length_pos + 1;
                 while(1 &&
                       bodylen == READ_MORE_DATA){
-
                         datalen += read_n_bytes(sock, buf + datalen, BUFSIZE - datalen);
 
                         bodylen = read_length(buf, &bodylen_acc, &buf_pos, datalen);
 
-                        if(datalen >= BUFSIZE){
+                        if(datalen >= BUFSIZE && buf_pos == datalen){
                                 flush_buffer(wheretoprint, buf, &buf_pos, &datalen);
                         }
                 }
         }
 
-        flush_buffer(wheretoprint, buf, &buf_pos, &datalen);
+        for(;strncmp(END_HEADERS, buf + buf_pos, END_HEADERS_LEN - 1); buf_pos++);
+        buf_pos += END_HEADERS_LEN - 1;
 
-        // print until one bufferful left
-        // buf_pos is irrelevant, we're done parsing (YAY!)
-        while(datalen < bodylen - BUFSIZE){
-                datalen += read_n_bytes(sock, buf + datalen, BUFSIZE - datalen);
+        bodylen -= (datalen - buf_pos);
+
+        flush_buffer(wheretoprint, buf, &buf_pos, &datalen);
+        memset(buf, 0, BUFSIZE);
+
+        while(bodylen > 0){
+                single_read_bytes = read_n_bytes(sock,
+                                                 buf + datalen,
+                                                 (bodylen >= BUFSIZE) ?
+                                                 BUFSIZE - datalen:
+                                                 bodylen - datalen);
+                bodylen -= single_read_bytes;
+                datalen += single_read_bytes;
                 if(datalen >= BUFSIZE){
                         flush_buffer(wheretoprint, buf, &buf_pos, &datalen);
-
+                        memset(buf, 0, BUFSIZE);
                 }
         }
         flush_buffer(wheretoprint, buf, &buf_pos, &datalen);
 
-        while(datalen < BUFSIZE){
-                datalen += read_n_bytes(sock, buf + datalen, BUFSIZE - datalen);
-        }
 
         /*close socket and deinitialize */
         minet_close(sock);
@@ -228,10 +243,10 @@ int read_length(char* buf, int* bodylen_acc, int* buf_pos, int datalen){
                         return READ_MORE_DATA;
                 }
 
-                *bodylen_acc += (*bodylen_acc) * 10 + ((int) (buf[*buf_pos] - '0'));
-                *buf_pos++;
+                *bodylen_acc = (*bodylen_acc) * 10 + ((int) (buf[*buf_pos] - '0'));
+                (*buf_pos)++;
 
-                if(strncmp(END_HEADERS, buf + *buf_pos - END_HEADERS_LEN, END_HEADERS_LEN)){
+                if(!strncmp(END_LENGTH, buf + *buf_pos, END_LENGTH_LEN - 1)){
                         return *bodylen_acc;
                 }
         }
@@ -245,15 +260,16 @@ void flush_buffer(FILE* wheretoprint, char * buf, int* buf_pos, int* datalen){
 
 // Loads a get request into buf for server_path on port_no
 // request is null terminated.
-void build_get_request(char *buf, char *server_port, char *server_path){
+void build_get_request(char *buf, char *server_path){
+        memset(buf, '\0', BUFSIZE + 1);
         strcat(buf, "GET ");
 
         strcat(buf, server_path);
         strcat(buf, " ");
 
-        strcat(buf, server_port);
+        strcat(buf, HTTP_PROTOCOL);
 
-        strcat(buf, "\r\n");
+        strcat(buf, "\r\n\r\n");
 }
 
 
@@ -264,7 +280,7 @@ int check_status_line(char* buf){
         memset(status_buf, '\0', STATUS_LENGTH);
 
         int i = 0;
-        for(int i = 0; buf[i] != ' '; i++);
+        for(; buf[i] != ' '; i++);
         i += 1; //gets us onto the status code
         for(int j = 0; j < STATUS_LENGTH - 1; j++){ // preserve null byte
                 status_buf[j] = buf[i++];
@@ -286,11 +302,11 @@ int parse_headers(char *buf, int *buf_pos, int datalen){
 
         while(*buf_pos < datalen){
 
-                if(strncmp(END_HEADERS, buf + *buf_pos - END_HEADERS_LEN, END_HEADERS_LEN)){
+                if(!strncmp(END_HEADERS, buf + *buf_pos - (END_HEADERS_LEN - 2), END_HEADERS_LEN - 1)){
                         return LENGTH_NOT_FOUND;
                 }
-                *buf_pos++;
-                if(!strncmp(LENGTH_KEY, buf + *buf_pos - LENGTH_KEY_LEN, LENGTH_KEY_LEN)){
+                (*buf_pos)++;
+                if(!strncmp(LENGTH_KEY, buf + *buf_pos - (sizeof(LENGTH_KEY) - 2), sizeof(LENGTH_KEY) - 1)){
                         return *buf_pos;
                 }
 
