@@ -39,6 +39,7 @@ int main(int argc, char * argv[]) {
         int bodylen = 0;
         int bodylen_acc = 0;
         int length_pos = 0;
+        int print_off = 0;
         int found_response_end = 0;
         struct sockaddr_in sa;
         struct hostent *site;
@@ -207,7 +208,9 @@ int main(int argc, char * argv[]) {
 
         bodylen -= (datalen - buf_pos);
 
-        flush_buffer(wheretoprint, buf, &buf_pos, &datalen);
+        print_off = (rc < 0) ? 0 : buf_pos;
+
+        flush_buffer(wheretoprint, buf + print_off, &buf_pos, &datalen);
         memset(buf, 0, BUFSIZE);
 
         while(bodylen > 0){
@@ -229,11 +232,13 @@ int main(int argc, char * argv[]) {
         /*close socket and deinitialize */
         minet_close(sock);
 
+	minet_deinit();
 
         return rc;
 
  bad:
         minet_close(sock);
+	minet_deinit();
         return -1;
 }
 
