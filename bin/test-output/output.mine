@@ -1,0 +1,21 @@
+<title>Missing Host: Header or Host not Found</title>
+
+<h1>Missing Host: Header or Host not Found</h1>
+
+<font size="+2">
+<p>
+You should only reach this page if your web client software
+has not sent a Host: header, or you have requested
+a virtual host with an unknown host name.
+</p>
+
+<p>
+You should be able to reach the main Northwestern University Web server
+at: 
+<br>
+<a href="http://www.northwestern.edu/">http://www.northwestern.edu/</a>
+</p>
+<hr>
+<a href="mailto:webmaster@northwestern.edu">&lt;webmaster@northwestern.edu&gt;</a>
+</font>
+
