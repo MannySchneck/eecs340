@@ -11,7 +11,7 @@ RC=0
 WIN=0
 
 
-declare -a urls=("www.northwestern.edu" "www.eecs.northwestern.edu" "www.cs.northwestern.edu" "www.northwestern.edu")
+declare -a urls=("www.google.com" "www.northwestern.edu" "www.eecs.northwestern.edu" "www.cs.northwestern.edu" "www.northwestern.edu")
 
 echo "Running on paths: "
 for((i=0; i<${#urls[@]}; i++))
@@ -24,10 +24,10 @@ echo
 
 for((i=0; i<${#urls[@]}; i++))
 do
-    ./http_client ${urls[$i]}      &> $OUTPUT_DIR/output.mine
-    ./http_client.marc ${urls[$i]} &> $OUTPUT_DIR/output.marc
+    ./http_client ${urls[$i]}      &> $OUTPUT_DIR/output.mine-$i
+    ./http_client.marc ${urls[$i]} &> $OUTPUT_DIR/output.marc-$i
 
-    diff $OUTPUT_DIR/output.marc $OUTPUT_DIR/output.mine &>/dev/null
+    diff $OUTPUT_DIR/output.marc-$i $OUTPUT_DIR/output.mine-$i &>/dev/null
     RC=$?
 
     if [[ $RC == 0 ]]
@@ -38,7 +38,7 @@ do
         echo "FAILURE:"
         echo "${urls[$i]} gave different output. Here's the diff:"
 
-        diff -y $OUTPUT_DIR/output.marc $OUTPUT_DIR/output.mine
+        cmp  $OUTPUT_DIR/output.marc-$i $OUTPUT_DIR/output.mine-$i
         WIN=-1
     fi
     echo

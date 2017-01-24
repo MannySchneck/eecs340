@@ -212,7 +212,7 @@ int handle_connection(int c_sock){
         }
         else // send error response
                 {
-                        if(minet_write(c_sock, notok_response, strlen(buf)) < 0){
+                        if(writenbytes(c_sock, notok_response, strlen(notok_response)) < 0){
                                 return -1;
                         }
                 }
