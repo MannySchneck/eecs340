@@ -7,7 +7,10 @@
 #define BUFSIZE 1024
 #define FILENAMESIZE 100
 #define BACKLOG 1
+#define REQUEST_END "\r\n\r\n"
+#define REQUEST_END_LEN sizeof(REQUEST_END)
 
+bool is_more_request(char*);
 int handle_connection(int);
 int accept_connections(int listening_sock);
 int writenbytes(int,char *,int);
@@ -101,13 +104,15 @@ int handle_connection(int c_sock){
         int fd;
         struct stat filestat;
         char buf[BUFSIZE+1];
-        char *headers; 
+        char *headers;
         char *endheaders;
         char *bptr;
         int datalen=0;
         int status = 0;
         int bytes_sent = 0;
+        int bytes_read = 0;
         int bytes_to_send = 0;
+        bool more_request = true;
 
         char *ok_response_f = "HTTP/1.0 200 OK\r\n"\
                 "Content-type: text/plain\r\n"\
@@ -121,13 +126,18 @@ int handle_connection(int c_sock){
         bool ok=true;
 
         memset(ok_response, '\0',  OK_LENGTH);
+        memset(buf, '\0', BUFSIZE);
 
         /* parse request to get file name */
         /* Assumption: this is a GET request and filename contains no spaces*/
-
-        if((readnbytes(c_sock, buf, BUFSIZE)) < 0){
-                perror("read");
-                return -1;
+        bptr = buf;
+        while(more_request){
+                if((bytes_read = (minet_read(c_sock, bptr, BUFSIZE))) < 0){
+                        perror("read");
+                        return -1;
+                }
+                bptr += bytes_read;
+                more_request = is_more_request(buf);
         }
 
         bptr = buf;
@@ -185,12 +195,24 @@ int handle_connection(int c_sock){
                 }
 
         /* close socket and free space */
+        shutdown(c_sock, SHUT_RDWR);
         minet_close(c_sock);
         if (ok)
                 return 0;
         else
                 return -1;
 }
+
+bool is_more_request(char* buf){
+        for(int i = 0; buf[i]; i++){
+                if(strncmp(buf + i, REQUEST_END, REQUEST_END_LEN - 1)){
+                        continue;
+                }
+                return false;
+        }
+        return true;
+}
+
 int readnbytes(int fd,char *buf,int size)
 {
         int rc = 0;
