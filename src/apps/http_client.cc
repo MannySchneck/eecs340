@@ -33,7 +33,6 @@ int main(int argc, char * argv[]) {
         char * server_path = NULL;
 
         int single_read_bytes = 0;
-        int body_bytes_read = 0;
         int sock = 0;
         int datalen = 0;
         int bodylen = 0;
@@ -182,17 +181,20 @@ int main(int argc, char * argv[]) {
                 }
         }
 
-        if(length_pos == LENGTH_NOT_FOUND){
-                my_error_at_line(length_pos, 0, "Didn't find length", __FILE__, __LINE__);
-                goto bad; // XXX: What should I do here?
-        }
         // parse in length field
-        else{
+        if(length_pos == LENGTH_NOT_FOUND){
+                buf_pos += 1;
+                fprintf(wheretoprint, "%s", buf + buf_pos);
+                memset(buf, '\0', BUFSIZE);
+                while(minet_read(sock, buf, BUFSIZE) > 0){
+                        fprintf(wheretoprint, "%s", buf);
+                        memset(buf, '\0', BUFSIZE);
+                }
+        } else{
                 bodylen_acc = 0;
                 bodylen = READ_MORE_DATA;
                 buf_pos = length_pos + 1;
-                while(1 &&
-                      bodylen == READ_MORE_DATA){
+                while(bodylen == READ_MORE_DATA){
                         datalen += read_n_bytes(sock, buf + datalen, BUFSIZE - datalen);
 
                         bodylen = read_length(buf, &bodylen_acc, &buf_pos, datalen);
@@ -201,44 +203,43 @@ int main(int argc, char * argv[]) {
                                 flush_buffer(wheretoprint, buf, &buf_pos, &datalen);
                         }
                 }
-        }
 
-        for(;strncmp(END_HEADERS, buf + buf_pos, END_HEADERS_LEN - 1); buf_pos++);
-        buf_pos += END_HEADERS_LEN - 1;
+                for(;strncmp(END_HEADERS, buf + buf_pos, END_HEADERS_LEN - 1); buf_pos++);
+                buf_pos += END_HEADERS_LEN - 1;
 
-        bodylen -= (datalen - buf_pos);
+                bodylen -= (datalen - buf_pos);
 
-        print_off = (rc < 0) ? 0 : buf_pos;
+                print_off = (rc < 0) ? 0 : buf_pos;
 
-        flush_buffer(wheretoprint, buf + print_off, &buf_pos, &datalen);
-        memset(buf, 0, BUFSIZE);
+                flush_buffer(wheretoprint, buf + print_off, &buf_pos, &datalen);
+                memset(buf, 0, BUFSIZE);
 
-        while(bodylen > 0){
-                single_read_bytes = read_n_bytes(sock,
-                                                 buf + datalen,
-                                                 (bodylen >= BUFSIZE) ?
-                                                 BUFSIZE - datalen:
-                                                 bodylen - datalen);
-                bodylen -= single_read_bytes;
-                datalen += single_read_bytes;
-                if(datalen >= BUFSIZE){
-                        flush_buffer(wheretoprint, buf, &buf_pos, &datalen);
-                        memset(buf, 0, BUFSIZE);
+                while(bodylen > 0){
+                        single_read_bytes = read_n_bytes(sock,
+                                                         buf + datalen,
+                                                         (bodylen >= BUFSIZE) ?
+                                                         BUFSIZE - datalen:
+                                                         bodylen - datalen);
+                        bodylen -= single_read_bytes;
+                        datalen += single_read_bytes;
+                        if(datalen >= BUFSIZE){
+                                flush_buffer(wheretoprint, buf, &buf_pos, &datalen);
+                                memset(buf, 0, BUFSIZE);
+                        }
                 }
+                flush_buffer(wheretoprint, buf, &buf_pos, &datalen);
         }
-        flush_buffer(wheretoprint, buf, &buf_pos, &datalen);
-
 
         /*close socket and deinitialize */
+        shutdown(sock, SHUT_RDWR);
         minet_close(sock);
-
-	minet_deinit();
+        minet_deinit();
 
         return rc;
 
  bad:
         minet_close(sock);
-	minet_deinit();
+        minet_deinit();
         return -1;
 }
 
