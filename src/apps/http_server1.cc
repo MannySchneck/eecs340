@@ -6,6 +6,7 @@
 
 #define BUFSIZE 1024
 #define FILENAMESIZE 100
+#define OK_LENGTH 100
 #define BACKLOG 1
 #define REQUEST_END "\r\n\r\n"
 #define REQUEST_END_LEN sizeof(REQUEST_END)
@@ -136,13 +137,16 @@ int handle_connection(int c_sock){
                         perror("read");
                         return -1;
                 }
+                
                 bptr += bytes_read;
                 more_request = is_more_request(buf);
         }
 
         bptr = buf;
-        for(;*bptr != '/'; bptr++);
-
+        for(;*bptr && *bptr != '/'; bptr++);
+        if(!bptr){
+          fprintf(stderr, "bad request. You forgot a \"/\" =(\n");
+                }
         bptr++; // point to first char of filename
 
         memset(filename, '\0', FILENAMESIZE + 1);
