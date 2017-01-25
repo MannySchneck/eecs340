@@ -7,7 +7,8 @@ app-objs :=	app.o \
 		tcp_client.o \
 		tcp_server.o \
 		udp_client.o \
-		udp_server.o 
+		udp_server.o \
+		tmp.o
 #		my_error.o
 
 
