@@ -138,8 +138,7 @@ int main(int argc,char *argv[])
                         /* loop over connections and deal with their shit */
                         for(conn = connection_list.start; conn != NULL; conn = conn->next){
                                 if(conn->state == TO_CLOSE){
-                                        shutdown(conn->sock, SHUT_RDWR);
-                                        minet_close(conn->sock);
+                                        clean_close(conn->sock);
                                 }
                                 if(FD_ISSET(conn->sock, &readlist) || (conn->fd, &readlist)){
                                         /* for a connection socket, handle the connection */
@@ -317,8 +316,8 @@ void read_file(connection *conn) {
 
 void write_file(connection *conn){
         int written = 0;
-        while(conn->file_written % BUFSIZE < conn->bptr){
-                int rc = minet_write(conn->sock, conn->buf+written, conn->file_read - conn->file_written);
+        while(written < conn->bptr){
+                int rc = minet_write(conn->sock, conn->buf + written, conn->file_read - conn->file_written);
                 if (rc < 0){
                         if (errno == EAGAIN)
                                 return;
@@ -327,10 +326,14 @@ void write_file(connection *conn){
                         minet_close(conn->sock);
                         return;
                 }
-                else if (rc > 0){
+                if (rc > 0){
                         conn->file_written += rc;
                         written += rc;
-                
+                }
+                if(conn->file_written >= conn->filelen){
+                        conn->state = TO_CLOSE;
+                        return;
+                }
         }
 }
 
@@ -398,8 +401,7 @@ void add_connection(int sock,connection_list *con_list){
                 con_list->last = conn;
 }
 
-void init_connection(connection *conn)
-{
+void init_connection(connection *conn){
         conn->fd = -1;
         conn->headers_read = 0;
         conn->response_written = 0;
