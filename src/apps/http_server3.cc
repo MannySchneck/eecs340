@@ -160,8 +160,11 @@ int main(int argc,char *argv[])
 
                         }
                         /* loop over connections and deal with their shit */
-                        for(conn = connections.last; conn != NULL; conn = conn->next){
+                        for(conn = connections.first; conn != NULL; conn = conn->next){
                                 if(conn->state == TO_CLOSE){
+                                        FD_CLR(conn->fd, &master_read_set);
+                                        FD_CLR(conn->sock, &master_read_set);
+                                        FD_CLR(conn->sock, &master_write_set);
                                         clean_close(conn);
                                 }
                                 if(FD_ISSET(conn->sock, &readlist) ||
@@ -189,6 +192,7 @@ int main(int argc,char *argv[])
                                         case WRITING_RESPONSE:
                                                 /* start writing, update state if done */
                                                 /* -> READING FILE */
+                                                FD_ISSET(conn->fd, &master_write_set);
                                                 write_response(conn);
                                                 break;
                                         case WRITING_FILE:
@@ -204,15 +208,15 @@ int main(int argc,char *argv[])
                 }
 
  bad:
-        // TODO:
-        // close all sockets
-        // shutdown all connections
-        // free all memory
+        connection* tmp;
+        for(conn = connections.first; conn != NULL; conn = tmp){
+                clean_close(conn);
+                tmp = conn->next;
+                free(conn);
+        }
         minet_deinit();
         return -1;
 }
-
-
 
 void clean_close(connection *conn){
         shutdown(conn->sock, SHUT_RDWR);
