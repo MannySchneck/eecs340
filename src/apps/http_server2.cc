@@ -148,7 +148,7 @@ int handle_connection(int c_sock){
         /* parse request to get file name */
         /* Assumption: this is a GET request and filename contains no spaces*/
         memset(ok_response, '\0',  OK_LENGTH);
-        memset(buf, '\0', BUFSIZE);
+        memset(buf, '\0', BUFSIZE + 1);
 
         /* parse request to get file name */
         /* Assumption: this is a GET request and filename contains no spaces*/

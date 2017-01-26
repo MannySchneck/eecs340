@@ -63,6 +63,7 @@ int main(int argc,char *argv[])
         connection *conn;
         int maxfd;
         char stack;
+        int flags;
 
         connections.first = NULL;
         connections.last = NULL;
@@ -99,9 +100,14 @@ int main(int argc,char *argv[])
                 exit(-1);
         }
 
-        if(fcntl(listening_sock, F_SETFL, O_NONBLOCK) < 0){
-                printf("%d\n", __LINE__);
+        if((flags = fcntl(listening_sock, F_GETFL, 0)) < 0){
+                perror("fcntl get");
+                exit(-1);
+        }
+        if(fcntl(listening_sock, F_SETFL, flags | O_NONBLOCK) < 0){
                 perror("fcntl ");
+                printf("%d\n", __LINE__);
+                exit(-1);
         }
         /* set server address*/
         memset(&sa, 0, sizeof(sa));
@@ -151,7 +157,12 @@ int main(int argc,char *argv[])
                                         }
                                 }
                                 maxfd = (new_sock > maxfd) ? new_sock : maxfd;
-                                if(fcntl(new_sock, F_SETFL, O_NONBLOCK) < 0){
+                                if((flags = fcntl(new_sock, F_GETFL, 0)) < 0){
+                                        perror("fcntl get");
+                                        printf("%d\n", __LINE__);
+                                        exit(-1);
+                                }
+                                if(fcntl(new_sock, F_SETFL, flags | O_NONBLOCK) < 0){
                                         perror("fcntl");
                                 }
                                 FD_SET(new_sock, &master_read_set);
@@ -165,6 +176,8 @@ int main(int argc,char *argv[])
                                         FD_CLR(conn->fd, &master_read_set);
                                         FD_CLR(conn->sock, &master_read_set);
                                         FD_CLR(conn->sock, &master_write_set);
+                                        readlist = master_read_set;
+                                        writelist = master_write_set;
                                         clean_close(conn);
                                 }
                                 if(FD_ISSET(conn->sock, &readlist) ||
@@ -228,6 +241,7 @@ void read_headers(connection *conn){
         struct stat statbuf;
         int bytes_read = 0;
         int c_sock = conn->sock;
+        int flags;
 
         while(!(conn->headers_read = !is_more_request(conn->buf))){
                 if((bytes_read = (minet_read(c_sock, conn->bptr, BUFSIZE))) < 0){
@@ -235,6 +249,7 @@ void read_headers(connection *conn){
                                 return;
                         }
                         perror("read");
+                        printf("%d\n", __LINE__);
                         exit(-1); // XXX not cleaning up =(
                 }
                 conn->bptr += bytes_read;
@@ -243,7 +258,7 @@ void read_headers(connection *conn){
         /* parse request to get file name */
         for(conn->bptr = conn->buf; (*conn->bptr && *conn->bptr != '/'); conn->bptr++);
 
-        if(!conn->bptr){
+        if(!(*conn->bptr)){
                 fprintf(stderr, "bad request. You forgot a \"/\" =(\n");
         }
 
@@ -260,19 +275,25 @@ void read_headers(connection *conn){
         conn->state = WRITING_RESPONSE;
         if(conn->ok){
                 conn->filelen = statbuf.st_size;
-                conn->fd = open(conn->filename, O_RDONLY);
-                if(fcntl(conn->fd, F_SETFL, O_NONBLOCK) < 0){
+                if((conn->fd = open(conn->filename, O_RDONLY)) < 0){
+                        perror("open");
+                        exit(-1);
+                }
+                if((flags = fcntl(conn->fd, F_GETFL, 0)) < 0){
+                        perror("fcntl get");
+                        exit(-1);
+                }
+                if(fcntl(conn->fd, F_SETFL, O_NONBLOCK | flags) < 0){
                         perror("fcntl");
                         exit(-1);
                 }
-                conn->state = READING_FILE;
                 return;
         }
 }
 
 
 void write_response(connection *conn){
-        int rc;
+        int rc = 0;
         char* response;
         char *ok_response_f = "HTTP/1.0 200 OK\r\n"\
                 "Content-type: text/plain\r\n"\
@@ -297,7 +318,7 @@ void write_response(connection *conn){
         while(conn->response_written < strlen(response)){
                 if((rc = minet_write(conn->sock,
                                      response + conn->response_written,
-                                     strlen(response)) < 0)){
+                                     strlen(response))) < 0){
                         if(errno == EAGAIN){
                                 return;
                         }
@@ -307,7 +328,6 @@ void write_response(connection *conn){
                         }
                 }
                 if(rc == 0){
-                        fprintf(stderr, "connection on socket %d was closed", conn->sock);
                         conn->state = TO_CLOSE;
                         return;
                 }
@@ -324,8 +344,18 @@ void write_response(connection *conn){
 
 void read_file(connection *conn) {
         int rc;
+        int flags;
 
         /* send file */
+        if((flags = fcntl(conn->fd, F_GETFL, 0)) < 0){
+                perror("fcntl get");
+                exit(-1);
+        }
+
+        if(fcntl(conn->fd, F_SETFL, flags | O_NONBLOCK) < 0){
+                perror("fcntl");
+                exit(-1);
+        }
         conn->bptr = conn->buf + (conn->file_read % BUFSIZE);
         while(conn->bptr < conn->buf + BUFSIZE && conn->file_read < conn->filelen){
                 rc = read(conn->fd, conn->bptr,BUFSIZE);
@@ -352,7 +382,7 @@ void read_file(connection *conn) {
 void write_file(connection *conn){
         int written = 0;
         while(conn->buf + written < conn->bptr){
-                int rc = minet_write(conn->sock, conn->buf + written, conn->file_read - conn->file_written);
+                int rc = minet_write(conn->sock, conn->buf + written, conn->bptr - conn->buf);
                 if (rc < 0){
                         if (errno == EAGAIN)
                                 return;
@@ -370,6 +400,7 @@ void write_file(connection *conn){
                         return;
                 }
         }
+        conn->state = READING_FILE;
 }
 
 int readnbytes(int fd,char *buf,int size)
